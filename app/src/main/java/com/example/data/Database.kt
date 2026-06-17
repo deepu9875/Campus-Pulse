@@ -15,9 +15,11 @@ import androidx.room.RoomDatabase
         AnnouncementEntity::class,
         RegistrationEntity::class,
         ChatEntity::class,
-        AuditLogEntity::class
+        AuditLogEntity::class,
+        PaymentEntity::class,
+        TicketEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class CampusPulseDatabase : RoomDatabase() {
@@ -30,6 +32,8 @@ abstract class CampusPulseDatabase : RoomDatabase() {
     abstract fun registrationDao(): RegistrationDao
     abstract fun chatDao(): ChatDao
     abstract fun auditLogDao(): AuditLogDao
+    abstract fun paymentDao(): PaymentDao
+    abstract fun ticketDao(): TicketDao
 
     companion object {
         @Volatile

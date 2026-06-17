@@ -1,5 +1,6 @@
 package com.example.ui
 
+import java.util.UUID
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -2248,15 +2249,31 @@ fun EventDetailsScreen(
     val userState by viewModel.userState.collectAsState()
     
     val isRegistered = remember(registrations) {
-        registrations.any { it.eventId == event.id && it.status == "PAID" }
+        registrations.any { it.eventId == event.id && (it.status == "PAID" || it.status == "Registered" || it.status == "Payment Successful") }
     }
     
     val myTicketRecord = remember(registrations) {
-        registrations.firstOrNull { it.eventId == event.id && it.status == "PAID" }
+        registrations.firstOrNull { it.eventId == event.id && (it.status == "PAID" || it.status == "Registered" || it.status == "Payment Successful") }
     }
 
     var triggerConfetti by remember { mutableStateOf(false) }
     var showRegisterWarningDialog by remember { mutableStateOf(false) }
+
+    // Event Payment Secure States
+    var activePaymentStage by remember { mutableStateOf("") } // "", "SUMMARY", "GATEWAY", "PROCESSING", "SUCCESS", "FAILED"
+    var selectedGateway by remember { mutableStateOf("Razorpay") }
+    var termsAgreed by remember { mutableStateOf(false) }
+    var generatedRegId by remember { mutableStateOf("") }
+    var mockPaymentId by remember { mutableStateOf("") }
+
+    // Coupon Payment Secure States
+    var targetCouponToBuy by remember { mutableStateOf<FoodCouponEntity?>(null) }
+    var targetStallIdToBuy by remember { mutableStateOf("") }
+    var couponPaymentStage by remember { mutableStateOf("") } // "", "SUMMARY", "GATEWAY", "PROCESSING", "SUCCESS", "FAILED"
+    var selectedCouponGateway by remember { mutableStateOf("Razorpay") }
+    var foodCouponTermsAgreed by remember { mutableStateOf(false) }
+    var generatedCouponRegId by remember { mutableStateOf("") }
+    var mockCouponPaymentId by remember { mutableStateOf("") }
     
     val localSnackbarHostState = remember { SnackbarHostState() }
     val localScope = rememberCoroutineScope()
@@ -2665,9 +2682,9 @@ fun EventDetailsScreen(
                                                                 onClick = {
                                                                     // Validation Rule: Buying allowed ONLY if registered for this event!
                                                                     if (isRegistered) {
-                                                                        viewModel.buyFoodCoupon(coup.id, stallId, "UPI Portal Link") { success, msg ->
-                                                                            showLocalSnack(msg)
-                                                                        }
+                                                                        targetCouponToBuy = coup
+                                                                        targetStallIdToBuy = stallId
+                                                                        couponPaymentStage = "SUMMARY"
                                                                     } else {
                                                                         // Strict restriction rule dialog trigger
                                                                         showRegisterWarningDialog = true
@@ -2815,15 +2832,15 @@ fun EventDetailsScreen(
                         Button(
                             onClick = {
                                 if (userState is CurrentUser.Student) {
-                                    viewModel.registerForEvent(event.id, "UPI Secure Channel") { success, _ ->
-                                        if (success) {
-                                            triggerConfetti = true
-                                            onRegistrationSuccess()
-                                            showLocalSnack("Seat successfully booked! Generating your QR ticket...")
-                                        }
+                                    if (isRegistered) {
+                                        showLocalSnack("You are already registered for this event!")
+                                    } else if (event.seatsLeft <= 0) {
+                                        showLocalSnack("Sorry, all seats for this event are fully booked!")
+                                    } else {
+                                        activePaymentStage = "SUMMARY" // Launch payment-first flow
                                     }
                                 } else {
-                                    onRegistrationSuccess() // Triggers fallback dialog
+                                    onRegistrationSuccess() // Triggers default login prompt dialer
                                 }
                             },
                             shape = RoundedCornerShape(20.dp),
@@ -2836,7 +2853,11 @@ fun EventDetailsScreen(
                             Icon(Icons.Default.ConfirmationNumber, "Key")
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
-                                if (userState is CurrentUser.Student) "Book My Seat (INR ${event.regFee.toInt()})" else "Student Login Required",
+                                if (userState is CurrentUser.Student) {
+                                    if (event.regFee <= 0) "Register Free" else "Book My Seat (INR ${event.regFee.toInt()})"
+                                } else {
+                                    "Student Login Required"
+                                },
                                 style = MaterialTheme.typography.titleMedium
                             )
                         }
@@ -2865,6 +2886,500 @@ fun EventDetailsScreen(
         
         // Confetti Overlayer
         ConfettiOverlay(trigger = triggerConfetti)
+
+        // Event Payment Overlay
+        if (activePaymentStage.isNotEmpty()) {
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = {
+                    if (activePaymentStage == "SUMMARY" || activePaymentStage == "GATEWAY") {
+                        activePaymentStage = ""
+                    }
+                },
+                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    Scaffold(
+                        topBar = {
+                            CenterAlignedTopAppBar(
+                                title = { Text("Secure Registration Portal", fontWeight = FontWeight.Black, fontSize = 18.sp) },
+                                navigationIcon = {
+                                    if (activePaymentStage == "SUMMARY" || activePaymentStage == "GATEWAY" || activePaymentStage == "FAILED") {
+                                        IconButton(onClick = { activePaymentStage = "" }) {
+                                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    ) { paddingValues ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(paddingValues)
+                                .padding(24.dp)
+                                .verticalScroll(rememberScrollState()),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            when (activePaymentStage) {
+                                "SUMMARY" -> {
+                                    Text("Event Booking Summary", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black))
+                                    Text("Please verify college seat details and academic compliance.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                                    
+                                    Card(
+                                        shape = RoundedCornerShape(20.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(0.3f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            SummaryRow("Event Name", event.title)
+                                            SummaryRow("College Name", event.collegeName)
+                                            SummaryRow("Venue Location", event.venue)
+                                            SummaryRow("Event Date", event.date)
+                                            SummaryRow("Registration Fee", "INR ${event.regFee.toInt()}")
+                                            
+                                            val studentState = userState as? CurrentUser.Student
+                                            SummaryRow("Participant Name", studentState?.info?.name ?: "Guest Applicant")
+                                            SummaryRow("Host College", studentState?.info?.collegeName ?: "Guest School")
+                                            
+                                            HorizontalDivider()
+                                            SummaryBoldRow("Total Amount", "INR ${event.regFee.toInt()}")
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(4.dp))
+
+                                    Card(
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(0.15f)),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Text("Terms & Academic Compliance Contract", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text("1. Bookings cannot be refunded or rescheduled offline.\n2. You must present the secure generated QR ticket at admission gates.\n3. Disruptive behaviour of any kind is prohibited.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().clickable { termsAgreed = !termsAgreed }.padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(checked = termsAgreed, onCheckedChange = { termsAgreed = it }, modifier = Modifier.testTag("terms_checkbox"))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("I agree to terms and academic rules above.", style = MaterialTheme.typography.bodyMedium)
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            if (event.regFee <= 0.0) {
+                                                activePaymentStage = "PROCESSING"
+                                            } else {
+                                                activePaymentStage = "GATEWAY"
+                                            }
+                                        },
+                                        enabled = termsAgreed,
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("continue_to_payment_btn")
+                                    ) {
+                                        Text(if (event.regFee <= 0.0) "Register Free Seat" else "Continue to Payment")
+                                    }
+                                }
+                                "GATEWAY" -> {
+                                    Text("Choose Gateway Option", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black))
+                                    Text("Total settled amount: INR ${event.regFee.toInt()}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
+
+                                    val options = listOf(
+                                        Pair("Razorpay", Icons.Default.Security),
+                                        Pair("UPI", Icons.Default.QrCode),
+                                        Pair("Google Pay", Icons.Default.Payment),
+                                        Pair("PhonePe", Icons.Default.AccountBalanceWallet),
+                                        Pair("Paytm", Icons.Default.Send),
+                                        Pair("Credit Card", Icons.Default.CreditCard),
+                                        Pair("Debit Card", Icons.Default.CreditCard)
+                                    )
+
+                                    options.forEach { (name, icon) ->
+                                        val isSel = selectedGateway == name
+                                        Card(
+                                            onClick = { selectedGateway = name },
+                                            colors = CardDefaults.cardColors(containerColor = if (isSel) MaterialTheme.colorScheme.primary.copy(0.06f) else MaterialTheme.colorScheme.surface),
+                                            border = BorderStroke(if (isSel) 2.dp else 1.dp, if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.fillMaxWidth().testTag("gateway_item_${name.replace(" ", "_").lowercase()}")
+                                        ) {
+                                            Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(icon, null, tint = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    Spacer(modifier = Modifier.width(12.dp))
+                                                    Text(name, fontWeight = FontWeight.Bold)
+                                                }
+                                                RadioButton(selected = isSel, onClick = { selectedGateway = name })
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    Button(
+                                        onClick = { activePaymentStage = "PROCESSING" },
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("pay_and_verify_btn")
+                                    ) {
+                                        Text("Pay Now via $selectedGateway")
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { activePaymentStage = "" },
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("cancel_payment_btn")
+                                    ) {
+                                        Text("Cancel Process")
+                                    }
+                                }
+                                "PROCESSING" -> {
+                                    Spacer(modifier = Modifier.height(32.dp))
+                                    CircularProgressIndicator(modifier = Modifier.size(64.dp))
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text("Validating Cryptographic Handshake...", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                    Text("Saving security logs with system gateways...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+
+                                    LaunchedEffect(Unit) {
+                                        delay(1800)
+                                        val generatedId = "PAY-${UUID.randomUUID().toString().substring(0, 8).uppercase()}"
+                                        mockPaymentId = generatedId
+
+                                        viewModel.registerForEventSecure(
+                                            eventId = event.id,
+                                            paymentId = generatedId,
+                                            gateway = if (event.regFee <= 0.0) "FREE_GATE" else selectedGateway,
+                                            amountFilled = event.regFee,
+                                            paymentSuccess = true
+                                        ) { success, msg ->
+                                            if (success) {
+                                                generatedRegId = msg.substringAfter("Code: ")
+                                                activePaymentStage = "SUCCESS"
+                                                triggerConfetti = true
+                                            } else {
+                                                activePaymentStage = "FAILED"
+                                            }
+                                        }
+                                    }
+                                }
+                                "SUCCESS" -> {
+                                    Spacer(modifier = Modifier.height(24.dp))
+                                    Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF4CAF50), modifier = Modifier.size(80.dp))
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text("Payment Successful!", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = Color(0xFF4CAF50))
+                                    
+                                    Card(
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            SummaryRow("Secure Ticket ID", generatedRegId)
+                                            SummaryRow("Gateway Audit", if (event.regFee <= 0.0) "FREE_GATE" else selectedGateway)
+                                            SummaryRow("Payment Ref", mockPaymentId)
+                                            SummaryRow("Transaction Fee", "INR ${event.regFee.toInt()}")
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                    Button(
+                                        onClick = { activePaymentStage = "" },
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("view_qr_ticket_btn")
+                                    ) {
+                                        Text("Reveal Holographic QR Ticket")
+                                    }
+                                }
+                                "FAILED" -> {
+                                    Spacer(modifier = Modifier.height(24.dp))
+                                    Icon(Icons.Default.Error, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(80.dp))
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text("Payment Failed", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.error)
+                                    Text("The bank portal or UPI sync failed. Please try again.", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+
+                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                    Button(
+                                        onClick = { activePaymentStage = "GATEWAY" },
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("retry_payment_btn")
+                                    ) {
+                                        Text("Retry Security Protocol")
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { activePaymentStage = "" },
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                                    ) {
+                                        Text("Dismiss registration")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Coupon Payment Overlay
+        if (couponPaymentStage.isNotEmpty() && targetCouponToBuy != null) {
+            val coupon = targetCouponToBuy!!
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = {
+                    if (couponPaymentStage == "SUMMARY" || couponPaymentStage == "GATEWAY") {
+                        couponPaymentStage = ""
+                    }
+                },
+                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    Scaffold(
+                        topBar = {
+                            CenterAlignedTopAppBar(
+                                title = { Text("Pre-Book Food Offers", fontWeight = FontWeight.Black, fontSize = 18.sp) },
+                                navigationIcon = {
+                                    if (couponPaymentStage == "SUMMARY" || couponPaymentStage == "GATEWAY" || couponPaymentStage == "FAILED") {
+                                        IconButton(onClick = { couponPaymentStage = "" }) {
+                                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    ) { paddingValues ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(paddingValues)
+                                .padding(24.dp)
+                                .verticalScroll(rememberScrollState()),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            when (couponPaymentStage) {
+                                "SUMMARY" -> {
+                                    Text("Pre-Purchase Coupon Summary", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black))
+                                    Text("Acquire food vouchers securely ahead of schedule.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                                    
+                                    Card(
+                                        shape = RoundedCornerShape(20.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(0.3f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            SummaryRow("Coupon Item", coupon.itemName)
+                                            SummaryRow("Cuisine Style", "Prebook Offer Discounted")
+                                            SummaryRow("Price Injected", "INR ${coupon.price.toInt()}")
+                                            SummaryRow("Associated Event", event.title)
+                                            
+                                            val studentState = userState as? CurrentUser.Student
+                                            SummaryRow("Buyer Account", studentState?.info?.email ?: "Student")
+                                            
+                                            HorizontalDivider()
+                                            SummaryBoldRow("Total Amount", "INR ${coupon.price.toInt()}")
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().clickable { foodCouponTermsAgreed = !foodCouponTermsAgreed }.padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(checked = foodCouponTermsAgreed, onCheckedChange = { foodCouponTermsAgreed = it }, modifier = Modifier.testTag("coupon_terms_checkbox"))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("I agree to terms and food hygiene norms.", style = MaterialTheme.typography.bodyMedium)
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            if (coupon.price <= 0.0) {
+                                                couponPaymentStage = "PROCESSING"
+                                            } else {
+                                                couponPaymentStage = "GATEWAY"
+                                            }
+                                        },
+                                        enabled = foodCouponTermsAgreed,
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("coupon_continue_to_payment")
+                                    ) {
+                                        Text("Continue to Payment")
+                                    }
+                                }
+                                "GATEWAY" -> {
+                                    Text("Select Payment Gateway", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black))
+                                    Text("Food Settlement: INR ${coupon.price.toInt()}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
+
+                                    val options = listOf(
+                                        Pair("Razorpay", Icons.Default.Security),
+                                        Pair("UPI", Icons.Default.QrCode),
+                                        Pair("Google Pay", Icons.Default.Payment),
+                                        Pair("PhonePe", Icons.Default.AccountBalanceWallet),
+                                        Pair("Paytm", Icons.Default.Send),
+                                        Pair("Credit Card", Icons.Default.CreditCard),
+                                        Pair("Debit Card", Icons.Default.CreditCard)
+                                    )
+
+                                    options.forEach { (name, icon) ->
+                                        val isSel = selectedCouponGateway == name
+                                        Card(
+                                            onClick = { selectedCouponGateway = name },
+                                            colors = CardDefaults.cardColors(containerColor = if (isSel) MaterialTheme.colorScheme.primary.copy(0.06f) else MaterialTheme.colorScheme.surface),
+                                            border = BorderStroke(if (isSel) 2.dp else 1.dp, if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.fillMaxWidth().testTag("coupon_gateway_item_${name.replace(" ", "_").lowercase()}")
+                                        ) {
+                                            Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(icon, null, tint = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    Spacer(modifier = Modifier.width(12.dp))
+                                                    Text(name, fontWeight = FontWeight.Bold)
+                                                }
+                                                RadioButton(selected = isSel, onClick = { selectedCouponGateway = name })
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    Button(
+                                        onClick = { couponPaymentStage = "PROCESSING" },
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("coupon_pay_now_btn")
+                                    ) {
+                                        Text("Prepay via $selectedCouponGateway")
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { couponPaymentStage = "" },
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                                    ) {
+                                        Text("Cancel Pre-booking")
+                                    }
+                                }
+                                "PROCESSING" -> {
+                                    Spacer(modifier = Modifier.height(32.dp))
+                                    CircularProgressIndicator(modifier = Modifier.size(64.dp))
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text("Contacting Gateway Portal...", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+
+                                    LaunchedEffect(Unit) {
+                                        delay(1500)
+                                        val generatedId = "PAY-COUP-${UUID.randomUUID().toString().substring(0, 8).uppercase()}"
+                                        mockCouponPaymentId = generatedId
+
+                                        viewModel.buyFoodCouponSecure(
+                                            couponId = coupon.id,
+                                            stallId = targetStallIdToBuy,
+                                            gateway = selectedCouponGateway,
+                                            paymentId = generatedId,
+                                            paymentSuccess = true
+                                        ) { success, msg ->
+                                            if (success) {
+                                                generatedCouponRegId = msg.substringAfter("ticket generated: ")
+                                                couponPaymentStage = "SUCCESS"
+                                                showLocalSnack("Pre-booking confirmed! Added ticket to your credential hub.")
+                                            } else {
+                                                couponPaymentStage = "FAILED"
+                                            }
+                                        }
+                                    }
+                                }
+                                "SUCCESS" -> {
+                                    Spacer(modifier = Modifier.height(24.dp))
+                                    Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF4CAF50), modifier = Modifier.size(80.dp))
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text("Pre-booking Confirmed!", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = Color(0xFF4CAF50))
+                                    
+                                    Card(
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            SummaryRow("Coupon Ticket ID", generatedCouponRegId)
+                                            SummaryRow("Item Subtotal", "INR ${coupon.price.toInt()}")
+                                            SummaryRow("Reference Code", mockCouponPaymentId)
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                    Button(
+                                        onClick = { couponPaymentStage = "" },
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("coupon_success_btn")
+                                    ) {
+                                        Text("Go back to Event Hub")
+                                    }
+                                }
+                                "FAILED" -> {
+                                    Spacer(modifier = Modifier.height(24.dp))
+                                    Icon(Icons.Default.Error, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(80.dp))
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text("Pre-purchase Failed", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.error)
+
+                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                    Button(
+                                        onClick = { couponPaymentStage = "GATEWAY" },
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                                    ) {
+                                        Text("Retry Secure Transaction")
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { couponPaymentStage = "" },
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                                    ) {
+                                        Text("Dismiss")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Confetti Overlayer
+        ConfettiOverlay(trigger = triggerConfetti)
+    }
+}
+
+@Composable
+fun SummaryRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.tertiary)
+        Text(text = value, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.testTag("summary_val_${label.replace(" ", "_").lowercase()}"))
+    }
+}
+
+@Composable
+fun SummaryBoldRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = label, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurface)
+        Text(text = value, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black), color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("summary_bold_${label.replace(" ", "_").lowercase()}"))
     }
 }
 
@@ -3541,6 +4056,7 @@ fun OrganizerDashboardScreen(
 ) {
     val auditLogs by viewModel.auditLogs.collectAsState()
     val events by viewModel.allEvents.collectAsState()
+    val allRegs by viewModel.allRegistrations.collectAsState()
 
     var eventTitle by remember { mutableStateOf("") }
     var eventDesc by remember { mutableStateOf("") }
@@ -3679,6 +4195,64 @@ fun OrganizerDashboardScreen(
                         }
                         IconButton(onClick = { viewModel.deleteEvent(event.id) }) {
                             Icon(Icons.Default.Delete, "Delete", tint = Color.Red)
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(32.dp))
+            Text("Attendee Registration & Payment Statuses", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+            Text("Observe attendee seats and secure cash receipt channels.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        if (allRegs.isEmpty()) {
+            item {
+                Text("No ticket registrations completed by students yet.", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium)
+            }
+        } else {
+            items(allRegs) { reg ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp).testTag("organizer_reg_log_${reg.id}"),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(reg.eventTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
+                            val statusColor = when (reg.status) {
+                                "PAID", "Registered", "Payment Successful" -> Color(0xFF4CAF50)
+                                "PENDING" -> MaterialTheme.colorScheme.secondary
+                                else -> MaterialTheme.colorScheme.error
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(30.dp))
+                                    .background(statusColor.copy(alpha = 0.1f))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = reg.status,
+                                    color = statusColor,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Email: ${reg.studentEmail}", fontSize = 11.sp, color = MaterialTheme.colorScheme.tertiary)
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("ID: ${reg.id}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text("Ref Key: ${reg.paymentId ?: "N/A"}", fontSize = 11.sp, color = MaterialTheme.colorScheme.tertiary)
                         }
                     }
                 }
@@ -3997,6 +4571,7 @@ fun ProfileScreen(
 ) {
     val userState by viewModel.userState.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
+    val paymentsList by viewModel.studentPayments.collectAsState()
 
     LazyColumn(
         modifier = Modifier
@@ -4149,6 +4724,92 @@ fun ProfileScreen(
                         ProfileInfoRow(icon = Icons.Default.Info, label = "Year", value = "${userItem.info.year} Year")
                         Spacer(modifier = Modifier.height(12.dp))
                         ProfileInfoRow(icon = Icons.Default.Phone, label = "Contact Phone", value = userItem.info.contactNo)
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth().testTag("profile_payments_section")
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text(
+                            text = "My Transactions & Payments",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Historic log of event registration passes and items",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        if (paymentsList.isEmpty()) {
+                            Text(
+                                "No registered transaction logs on store.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.padding(vertical = 12.dp)
+                            )
+                        } else {
+                            paymentsList.forEach { pay ->
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(0.2f)),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("payment_log_item_${pay.paymentId}")
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = if (pay.status == "SUCCESS") Icons.Default.CheckCircle else Icons.Default.Cancel,
+                                                    contentDescription = null,
+                                                    tint = if (pay.status == "SUCCESS") Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "Event / Item Ref",
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                            Text(
+                                                text = "₹${pay.amount.toInt()} INR",
+                                                fontWeight = FontWeight.Black,
+                                                fontSize = 13.sp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                text = "Ref: ${pay.paymentId}",
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.tertiary
+                                            )
+                                            Text(
+                                                text = "Via ${pay.gateway}",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

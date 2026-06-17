@@ -84,11 +84,34 @@ data class RegistrationEntity(
     val eventTitle: String,
     val regFee: Double,
     val paymentMethod: String,
-    val status: String, // "PAID", "CANCELLED"
+    val status: String, // "PAID", "CANCELLED", "Not Registered", "Payment Pending", "Payment Successful", "Registered"
     val qrCodeString: String,
     val timestamp: Long = System.currentTimeMillis(),
     val isPreBookedCoupon: Boolean = false,
-    val preBookedCouponId: String? = null
+    val preBookedCouponId: String? = null,
+    val paymentId: String? = null,
+    val paymentStatus: String? = null,
+    val ticketId: String? = null
+)
+
+@Entity(tableName = "payments")
+data class PaymentEntity(
+    @PrimaryKey val paymentId: String,
+    val userId: String, // email
+    val eventId: String,
+    val amount: Double,
+    val currency: String,
+    val status: String, // "SUCCESS", "FAILED", "PENDING"
+    val gateway: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "tickets")
+data class TicketEntity(
+    @PrimaryKey val ticketId: String,
+    val registrationId: String,
+    val qrCode: String,
+    val status: String // "ACTIVE", "CANCELLED"
 )
 
 @Entity(tableName = "chats")

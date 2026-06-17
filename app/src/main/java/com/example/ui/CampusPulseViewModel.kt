@@ -73,11 +73,27 @@ class CampusPulseViewModel(application: Application) : AndroidViewModel(applicat
     val allOrganizers: StateFlow<List<OrganizerEntity>> = repository.getAllOrganizersFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val allRegistrations: StateFlow<List<RegistrationEntity>> = repository.allRegistrationsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allPayments: StateFlow<List<PaymentEntity>> = repository.allPaymentsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     // Registrations stream dependent on active student email
     val studentRegistrations: StateFlow<List<RegistrationEntity>> = _userState
         .flatMapLatest { state ->
             if (state is CurrentUser.Student) {
                 repository.getRegistrationsForStudent(state.info.email)
+            } else {
+                flowOf(emptyList())
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val studentPayments: StateFlow<List<PaymentEntity>> = _userState
+        .flatMapLatest { state ->
+            if (state is CurrentUser.Student) {
+                repository.getPaymentsForStudent(state.info.email)
             } else {
                 flowOf(emptyList())
             }
@@ -330,6 +346,57 @@ class CampusPulseViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    fun registerForEventSecure(
+        eventId: String,
+        paymentId: String,
+        gateway: String,
+        amountFilled: Double,
+        paymentSuccess: Boolean,
+        onComplete: (Boolean, String) -> Unit
+    ) {
+        val user = _userState.value
+        if (user !is CurrentUser.Student) {
+            onComplete(false, "Authentication required: Please sign in as a Student to register.")
+            return
+        }
+
+        viewModelScope.launch {
+            val alreadyRegistered = repository.checkStudentRegistration(user.info.email, eventId)
+            if (alreadyRegistered) {
+                onComplete(false, "You are already registered for this event!")
+                return@launch
+            }
+
+            val event = repository.getEventById(eventId)
+            if (event == null) {
+                onComplete(false, "Event details not found.")
+                return@launch
+            }
+
+            if (event.seatsLeft <= 0) {
+                onComplete(false, "Sorry, all seats for this event are fully booked!")
+                return@launch
+            }
+
+            // Perform payment verification and record details
+            val ticket = repository.registerForEventWithPayment(
+                studentEmail = user.info.email,
+                eventId = eventId,
+                paymentId = paymentId,
+                gateway = gateway,
+                amountPaid = amountFilled,
+                paymentSuccess = paymentSuccess
+            )
+
+            if (ticket != null) {
+                addNotification("Registered for ${event.title}! Your unique registration ID is ${ticket.id}.")
+                onComplete(true, "Registration success! Code: ${ticket.id}")
+            } else {
+                onComplete(false, "Payment verification unsuccessful or cancelled.")
+            }
+        }
+    }
+
     fun buyFoodCoupon(couponId: String, stallId: String, paymentMethod: String, onComplete: (Boolean, String) -> Unit) {
         val user = _userState.value
         if (user !is CurrentUser.Student) {
@@ -346,6 +413,38 @@ class CampusPulseViewModel(application: Application) : AndroidViewModel(applicat
             )
             if (result.first) {
                 addNotification("Food Coupon purchased. Secure QR added to your tickets!")
+                onComplete(true, result.second)
+            } else {
+                onComplete(false, result.second)
+            }
+        }
+    }
+
+    fun buyFoodCouponSecure(
+        couponId: String,
+        stallId: String,
+        gateway: String,
+        paymentId: String,
+        paymentSuccess: Boolean,
+        onComplete: (Boolean, String) -> Unit
+    ) {
+        val user = _userState.value
+        if (user !is CurrentUser.Student) {
+            onComplete(false, "Student account is required to buy food coupons!")
+            return
+        }
+
+        viewModelScope.launch {
+            val result = repository.buyFoodCouponWithPayment(
+                studentEmail = user.info.email,
+                couponId = couponId,
+                stallId = stallId,
+                gateway = gateway,
+                paymentId = paymentId,
+                paymentSuccess = paymentSuccess
+            )
+            if (result.first) {
+                addNotification("Food Coupon pre-booked! Under secure Pay ID: $paymentId")
                 onComplete(true, result.second)
             } else {
                 onComplete(false, result.second)

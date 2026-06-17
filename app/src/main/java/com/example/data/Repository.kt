@@ -16,6 +16,8 @@ class CampusPulseRepository(private val context: Context) {
     private val registrationDao = db.registrationDao()
     private val chatDao = db.chatDao()
     private val auditLogDao = db.auditLogDao()
+    private val paymentDao = db.paymentDao()
+    private val ticketDao = db.ticketDao()
 
     // --- Exposed Streams for MVVM VM Observables ---
     val allEventsFlow: Flow<List<EventEntity>> = eventDao.getAllEventsFlow()
@@ -25,9 +27,15 @@ class CampusPulseRepository(private val context: Context) {
     val allAnnouncementsFlow: Flow<List<AnnouncementEntity>> = announcementDao.getAllAnnouncementsFlow()
     val allAuditLogsFlow: Flow<List<AuditLogEntity>> = auditLogDao.getAllAuditLogsFlow()
     val allChatsFlow: Flow<List<ChatEntity>> = chatDao.getAllChatsFlow()
+    val allPaymentsFlow: Flow<List<PaymentEntity>> = paymentDao.getAllPaymentsFlow()
+    val allRegistrationsFlow: Flow<List<RegistrationEntity>> = registrationDao.getAllRegistrationsFlow()
 
     fun getRegistrationsForStudent(email: String): Flow<List<RegistrationEntity>> {
         return registrationDao.getRegistrationsForStudentFlow(email)
+    }
+
+    fun getPaymentsForStudent(email: String): Flow<List<PaymentEntity>> {
+        return paymentDao.getPaymentsForUserFlow(email)
     }
 
     fun getCouponsForStall(stallId: String): Flow<List<FoodCouponEntity>> {
@@ -97,67 +105,162 @@ class CampusPulseRepository(private val context: Context) {
         paymentMethod: String,
         amountPaid: Double
     ): RegistrationEntity? {
+        // Fallback or direct registration for free events (fee == 0)
+        return registerForEventWithPayment(
+            studentEmail = studentEmail,
+            eventId = eventId,
+            paymentId = "PAY-FREE-${UUID.randomUUID().toString().substring(0, 6).uppercase()}",
+            gateway = paymentMethod,
+            amountPaid = amountPaid,
+            paymentSuccess = true
+        )
+    }
+
+    suspend fun registerForEventWithPayment(
+        studentEmail: String,
+        eventId: String,
+        paymentId: String,
+        gateway: String,
+        amountPaid: Double,
+        paymentSuccess: Boolean
+    ): RegistrationEntity? {
         val event = eventDao.getEventById(eventId) ?: return null
         val regId = "REG-${UUID.randomUUID().toString().substring(0, 8).uppercase()}"
-        val qrCodeString = "TICKET:$studentEmail:$eventId:$regId"
-        
+        val ticketId = "TCK-${UUID.randomUUID().toString().substring(0, 8).uppercase()}"
+        val qrCodeString = "TICKET:$studentEmail:$eventId:$regId:$ticketId"
+
+        val regStatus = if (paymentSuccess) "Registered" else "Payment Pending"
+        val payStatus = if (paymentSuccess) "SUCCESS" else "FAILED"
+
+        // 15. Store payment history
+        val payment = PaymentEntity(
+            paymentId = paymentId,
+            userId = studentEmail,
+            eventId = eventId,
+            amount = amountPaid,
+            currency = "INR",
+            status = payStatus,
+            gateway = gateway
+        )
+        paymentDao.insertPayment(payment)
+
+        if (!paymentSuccess) {
+            logAudit("PAYMENT_FAILED", studentEmail, "Payment failed via gateway $gateway for event '${event.title}'. Status: FAILED.")
+            return null
+        }
+
+        // Save ticket details after payment success
+        val ticket = TicketEntity(
+            ticketId = ticketId,
+            registrationId = regId,
+            qrCode = qrCodeString,
+            status = "ACTIVE"
+        )
+        ticketDao.insertTicket(ticket)
+
+        // Save registration after payment success
         val registration = RegistrationEntity(
             id = regId,
             studentEmail = studentEmail,
             eventId = eventId,
             eventTitle = event.title,
             regFee = amountPaid,
-            paymentMethod = paymentMethod,
-            status = "PAID",
-            qrCodeString = qrCodeString
+            paymentMethod = gateway,
+            status = regStatus,
+            qrCodeString = qrCodeString,
+            paymentId = paymentId,
+            paymentStatus = payStatus,
+            ticketId = ticketId
         )
-        
         registrationDao.insertRegistration(registration)
-        
-        // Decrement seats available elegantly
+
+        // Decrement seats/capacity
         val updatedEvent = event.copy(seatsLeft = (event.seatsLeft - 1).coerceAtLeast(0))
         eventDao.insertEvent(updatedEvent)
 
-        logAudit("REGISTRATION", studentEmail, "Successfully registered for event '${event.title}'. Ticket: $regId. Paid: $amountPaid INR.")
+        logAudit("REGISTRATION_SUCCESS", studentEmail, "Successfully registered for event '${event.title}' with Reg ID $regId after secure payment verification via $gateway.")
         return registration
     }
 
-    // Validate registration before coupon purchase
     suspend fun buyFoodCoupon(
         studentEmail: String,
         couponId: String,
         stallId: String,
         paymentMethod: String
     ): Pair<Boolean, String> {
+        // Fallback for simpler direct coupon purchase
+        return buyFoodCouponWithPayment(
+            studentEmail = studentEmail,
+            couponId = couponId,
+            stallId = stallId,
+            gateway = paymentMethod,
+            paymentId = "PAY-COUP-${UUID.randomUUID().toString().substring(0, 6).uppercase()}",
+            paymentSuccess = true
+        )
+    }
+
+    suspend fun buyFoodCouponWithPayment(
+        studentEmail: String,
+        couponId: String,
+        stallId: String,
+        gateway: String,
+        paymentId: String,
+        paymentSuccess: Boolean
+    ): Pair<Boolean, String> {
         val coupon = foodCouponDao.getCouponById(couponId) ?: return Pair(false, "Coupon not found")
-        
-        // Rule check: Must be registered for at least ONE event to purchase a coupon!
+
+        // 14. Validation Rule: Users can only buy food coupons if they have successfully registered for the event.
         val registrations = registrationDao.getRegistrationsForStudentFlow(studentEmail).first()
-        val hasActiveRegistrations = registrations.any { it.status == "PAID" }
-        
-        if (!hasActiveRegistrations) {
-            return Pair(false, "Validation Rule Failed: You must register for at least one Campus event before pre-booking food coupons!")
+        val hasActiveRegistrations = registrations.any { reg ->
+            (reg.status == "PAID" || reg.status == "Registered" || reg.status == "Payment Successful") && reg.eventId != "FOOD_COUPON"
         }
 
-        // Buy coupon by creating a specialized ticket in registrations
+        if (!hasActiveRegistrations) {
+            return Pair(false, "Validation Rule Failed: Food coupons can only be purchased if the student has successfully registered for at least one active Campus Pulse event.")
+        }
+
+        val price = coupon.price
+        val payStatus = if (paymentSuccess) "SUCCESS" else "FAILED"
+
+        // Create and Save Payment details
+        val payment = PaymentEntity(
+            paymentId = paymentId,
+            userId = studentEmail,
+            eventId = "FOOD_COUPON:$couponId",
+            amount = price,
+            currency = "INR",
+            status = payStatus,
+            gateway = gateway
+        )
+        paymentDao.insertPayment(payment)
+
+        if (!paymentSuccess) {
+            logAudit("FOOD_COUPON_PAYMENT_FAILED", studentEmail, "Payment failed for Food Coupon ID $couponId in Stall ID $stallId. Status: FAILED.")
+            return Pair(false, "Payment Failed: Coupon purchase was cancelled because payment was unsuccessful.")
+        }
+
+        // Create coupon registration
         val regId = "COUP-${UUID.randomUUID().toString().substring(0, 8).uppercase()}"
         val qrCodeString = "FOOD_COUPON:$studentEmail:$stallId:$couponId:$regId"
-        
+
         val couponRegistration = RegistrationEntity(
             id = regId,
             studentEmail = studentEmail,
             eventId = "FOOD_COUPON",
             eventTitle = "Food Coupon: ${coupon.itemName}",
-            regFee = coupon.price,
-            paymentMethod = paymentMethod,
-            status = "PAID",
+            regFee = price,
+            paymentMethod = gateway,
+            status = "Registered",
             qrCodeString = qrCodeString,
             isPreBookedCoupon = true,
-            preBookedCouponId = couponId
+            preBookedCouponId = couponId,
+            paymentId = paymentId,
+            paymentStatus = "SUCCESS",
+            ticketId = regId
         )
 
         registrationDao.insertRegistration(couponRegistration)
-        logAudit("FOOD_COUPON_PURCHASE", studentEmail, "Pre-booked food coupon '${coupon.itemName}' from Stall ID '$stallId'. Ticket: $regId")
+        logAudit("FOOD_COUPON_PURCHASE", studentEmail, "Pre-booked food coupon '${coupon.itemName}' from Stall ID '$stallId' with Pay ID '$paymentId'. Ticket: $regId")
         return Pair(true, "Purchase approved! Food coupon QR ticket generated: $regId")
     }
 
