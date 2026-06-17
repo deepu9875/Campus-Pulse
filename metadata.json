@@ -1,0 +1,6 @@
+{
+  "name": "Campus Pulse",
+  "description": "Smart College Event Management and Registration Platform with AI Assistant, Offline Caching, and QR Tickets",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
