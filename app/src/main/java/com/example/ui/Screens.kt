@@ -34,7 +34,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -67,6 +71,17 @@ sealed interface Screen {
     object AdminDashboard : Screen
     object NoticeBoard : Screen
     object Profile : Screen
+}
+
+enum class SplashStage {
+    STAGE_1_CLEAN_DOT,
+    STAGE_2_EXPAND_LOGO,
+    STAGE_3_CAP_DROP,
+    STAGE_4_SMILE_PULSE,
+    STAGE_5_TEXT_REVEAL,
+    STAGE_6_TAGLINE,
+    STAGE_7_CONFETTI,
+    STAGE_8_EXIT
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -114,9 +129,51 @@ fun AppNavigationContainer(
     }
 
     var showOpeningSplash by remember { mutableStateOf(true) }
+    var splashStage by remember { mutableStateOf(SplashStage.STAGE_1_CLEAN_DOT) }
+
+    val isSoundEnabled by viewModel.splashSoundEnabled.collectAsState()
 
     LaunchedEffect(Unit) {
-        delay(1600)
+        // Stage 1: Central Glowing Dot appears (300ms)
+        splashStage = SplashStage.STAGE_1_CLEAN_DOT
+        if (isSoundEnabled) {
+            SimpleChimePlayer.playHeartbeat()
+        }
+        delay(300)
+        
+        // Stage 2: Glow dot expands to Logo icon, scales 0.6x to 1x (600ms)
+        splashStage = SplashStage.STAGE_2_EXPAND_LOGO
+        delay(600)
+        
+        // Stage 3: Graduation cap drops with tiny bounce, tassel swings (400ms)
+        splashStage = SplashStage.STAGE_3_CAP_DROP
+        if (isSoundEnabled) {
+            SimpleChimePlayer.playHeartbeat()
+        }
+        delay(400)
+        
+        // Stage 4: Smiling face fades in, pulse marks outward (300ms)
+        splashStage = SplashStage.STAGE_4_SMILE_PULSE
+        delay(300)
+        
+        // Stage 5: Text 'Campus' and 'PULSE' fade & slide into place with gradient reveal (500ms)
+        splashStage = SplashStage.STAGE_5_TEXT_REVEAL
+        if (isSoundEnabled) {
+            SimpleChimePlayer.playChime()
+        }
+        delay(500)
+        
+        // Stage 6: Tagline "One Campus. Infinite Moments." fades in (300ms)
+        splashStage = SplashStage.STAGE_6_TAGLINE
+        delay(300)
+        
+        // Stage 7: Settle gently, pulse once, confetti appears (400ms)
+        splashStage = SplashStage.STAGE_7_CONFETTI
+        delay(400)
+        
+        // Stage 8: Exit transition smoothly morphs/fades (500ms)
+        splashStage = SplashStage.STAGE_8_EXIT
+        delay(100) // Settle
         showOpeningSplash = false
     }
 
@@ -270,92 +327,249 @@ fun AppNavigationContainer(
     }
 
     // Beautiful custom Opening Splash Transition panel
-        AnimatedVisibility(
-            visible = showOpeningSplash,
-            enter = fadeIn(animationSpec = tween(durationMillis = 300)),
-            exit = fadeOut(animationSpec = tween(durationMillis = 600, easing = LinearOutSlowInEasing))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background) // Use correct theme background (Scandinavian light #F5F5F7 or Dark)
-                    .clickable(enabled = false) {}, // Intercept clicks during opening
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.padding(32.dp)
-                ) {
-                    // Pulsing animated scaling icon badge
-                    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-                    val scale by infiniteTransition.animateFloat(
-                        initialValue = 0.95f,
-                        targetValue = 1.05f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1000, easing = FastOutSlowInEasing),
-                            repeatMode = RepeatMode.Reverse
-                        ),
-                        label = "scale"
-                    )
+    AnimatedVisibility(
+        visible = showOpeningSplash,
+        enter = fadeIn(animationSpec = tween(durationMillis = 300)),
+        exit = fadeOut(animationSpec = tween(durationMillis = 600, easing = LinearOutSlowInEasing))
+    ) {
+        val bgCol = if (MaterialTheme.colorScheme.background == Color(0xFFF5F5F7)) Color(0xFFF5F5F7) else MaterialTheme.colorScheme.background
+        
+        // Stages animated variables
+        val infiniteDotTransition = rememberInfiniteTransition(label = "dotPulse")
+        val dotScale by infiniteDotTransition.animateFloat(
+            initialValue = 0.9f,
+            targetValue = 1.1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(400, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "dotScale"
+        )
 
-                    Box(
-                        modifier = Modifier
-                            .size((96 * scale).dp)
-                            .clip(RoundedCornerShape(28.dp))
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Campaign,
-                            contentDescription = "Logo",
-                            tint = Color.White,
-                            modifier = Modifier.size(48.dp)
+        val logoScaleState by animateFloatAsState(
+            targetValue = when (splashStage) {
+                SplashStage.STAGE_1_CLEAN_DOT -> 0.0f
+                SplashStage.STAGE_2_EXPAND_LOGO -> 1.0f
+                SplashStage.STAGE_3_CAP_DROP -> 1.0f
+                SplashStage.STAGE_4_SMILE_PULSE -> 1.0f
+                SplashStage.STAGE_5_TEXT_REVEAL -> 1.0f
+                SplashStage.STAGE_6_TAGLINE -> 1.0f
+                SplashStage.STAGE_7_CONFETTI -> 1.08f
+                SplashStage.STAGE_8_EXIT -> 0.9f
+            },
+            animationSpec = when (splashStage) {
+                SplashStage.STAGE_2_EXPAND_LOGO -> spring(dampingRatio = 0.58f, stiffness = Spring.StiffnessMediumLow)
+                SplashStage.STAGE_7_CONFETTI -> spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessLow)
+                SplashStage.STAGE_8_EXIT -> tween(durationMillis = 500, easing = FastOutSlowInEasing)
+                else -> tween(durationMillis = 300)
+            },
+            label = "logoScaleState"
+        )
+
+        val capYOffsetState by animateFloatAsState(
+            targetValue = if (splashStage >= SplashStage.STAGE_3_CAP_DROP) 0f else -140f,
+            animationSpec = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow),
+            label = "capYOffsetState"
+        )
+
+        val tasselSwingState by animateFloatAsState(
+            targetValue = if (splashStage >= SplashStage.STAGE_3_CAP_DROP) 12f else -30f,
+            animationSpec = spring(dampingRatio = 0.3f, stiffness = Spring.StiffnessVeryLow),
+            label = "tasselSwingState"
+        )
+
+        val smileAlphaState by animateFloatAsState(
+            targetValue = if (splashStage >= SplashStage.STAGE_4_SMILE_PULSE) 1f else 0f,
+            animationSpec = tween(durationMillis = 300),
+            label = "smileAlphaState"
+        )
+
+        val pulseScaleState by animateFloatAsState(
+            targetValue = if (splashStage >= SplashStage.STAGE_4_SMILE_PULSE) 1f else 0f,
+            animationSpec = spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium),
+            label = "pulseScaleState"
+        )
+
+        val pulseOffsetState by animateFloatAsState(
+            targetValue = if (splashStage >= SplashStage.STAGE_4_SMILE_PULSE) 0f else -12f,
+            animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow),
+            label = "pulseOffsetState"
+        )
+
+        val campusAlpha by animateFloatAsState(
+            targetValue = if (splashStage >= SplashStage.STAGE_5_TEXT_REVEAL) 1f else 0f,
+            animationSpec = tween(durationMillis = 400),
+            label = "campusAlpha"
+        )
+
+        val campusOffset by animateFloatAsState(
+            targetValue = if (splashStage >= SplashStage.STAGE_5_TEXT_REVEAL) 0f else 22f,
+            animationSpec = tween(durationMillis = 400),
+            label = "campusOffset"
+        )
+
+        val pulseAlpha by animateFloatAsState(
+            targetValue = if (splashStage >= SplashStage.STAGE_5_TEXT_REVEAL) 1f else 0f,
+            animationSpec = tween(durationMillis = 400, delayMillis = 150),
+            label = "pulseAlpha"
+        )
+
+        val pulseOffsetSlide by animateFloatAsState(
+            targetValue = if (splashStage >= SplashStage.STAGE_5_TEXT_REVEAL) 0f else -18f,
+            animationSpec = tween(durationMillis = 400, delayMillis = 150),
+            label = "pulseOffsetSlide"
+        )
+
+        val taglineAlphaState by animateFloatAsState(
+            targetValue = if (splashStage >= SplashStage.STAGE_6_TAGLINE) 1f else 0f,
+            animationSpec = tween(durationMillis = 400),
+            label = "taglineAlphaState"
+        )
+
+        val confettiList = remember {
+            List(35) {
+                Triple(
+                    Random.nextFloat(), // original relative X
+                    Random.nextFloat(), // original relative Y
+                    listOf(Color(0xFFFF7043), Color(0xFFEC407A), Color(0xFFAB47BC), Color(0xFFFFB74D), Color(0xFF42A5F5)).random()
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(bgCol)
+                .clickable {
+                    // Instantly skip custom splash on click
+                    showOpeningSplash = false
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            // Draw beautiful radial gradient background & soft floating confetti
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                
+                // Subtle radial gradient atmosphere
+                val gradientBrush = Brush.radialGradient(
+                    colors = if (bgCol == Color(0xFFF5F5F7)) {
+                        listOf(Color.White, Color(0xFFEFEFEF))
+                    } else {
+                        listOf(bgCol.copy(alpha = 0.2f), bgCol)
+                    },
+                    center = Offset(w / 2f, h / 2f),
+                    radius = w * 0.9f
+                )
+                drawRect(brush = gradientBrush)
+
+                // Confetti Particles
+                if (splashStage >= SplashStage.STAGE_7_CONFETTI) {
+                    confettiList.forEach { (rx, ry, color) ->
+                        val px = rx * w
+                        val py = ry * h + (h * 0.04f * logoScaleState)
+                        drawCircle(
+                            color = color.copy(alpha = 0.7f * (1f - (logoScaleState - 1f).coerceIn(0f, 1f))),
+                            radius = w * 0.012f,
+                            center = Offset(px, py % h)
                         )
                     }
+                }
+            }
 
-                    Spacer(modifier = Modifier.height(28.dp))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.padding(32.dp)
+            ) {
+                // Animated Campus Pulse Mascot Logo Vector
+                Box(
+                    modifier = Modifier.size(180.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (splashStage == SplashStage.STAGE_1_CLEAN_DOT) {
+                        Box(
+                            modifier = Modifier
+                                .size((24 * dotScale).dp)
+                                .shadow(8.dp, CircleShape)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFFFF7043), Color(0xFFEC407A))
+                                    )
+                                )
+                        )
+                    } else {
+                        CampusPulseLogoView(
+                            modifier = Modifier.fillMaxSize(),
+                            logoScale = logoScaleState,
+                            capYOffset = capYOffsetState,
+                            tasselSwing = tasselSwingState,
+                            smileAlpha = smileAlphaState,
+                            pulseScale = pulseScaleState,
+                            pulseOffset = pulseOffsetState
+                        )
+                    }
+                }
 
+                Spacer(modifier = Modifier.height(32.dp))
+
+                // Heading Logo typography reveal
+                if (splashStage >= SplashStage.STAGE_5_TEXT_REVEAL) {
                     Text(
-                        text = "CAMPUS PULSE",
+                        text = "Campus",
                         style = MaterialTheme.typography.headlineLarge.copy(
                             fontWeight = FontWeight.Black,
-                            letterSpacing = 4.sp,
-                            color = MaterialTheme.colorScheme.onBackground // Adapts to theme (No-compromise EditorialNearBlack #1C1C1E)
+                            fontFamily = FontFamily.SansSerif,
+                            color = MaterialTheme.colorScheme.onBackground
                         ),
-                        textAlign = TextAlign.Center
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = "EVENT DISCOVERY • CO-ORDINATION • FOOD PRE-BOOKING",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.5.sp,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f) // Adapts to theme
-                        ),
-                        textAlign = TextAlign.Center
-                    )
-
-                    Spacer(modifier = Modifier.height(48.dp))
-
-                    // Minimalist smooth line progress indicator representing resource caching
-                    LinearProgressIndicator(
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f),
                         modifier = Modifier
-                            .width(150.dp)
-                            .height(4.dp)
-                            .clip(CircleShape)
+                            .graphicsLayer {
+                                alpha = campusAlpha
+                                translationY = campusOffset
+                            }
+                    )
+                }
+
+                if (splashStage >= SplashStage.STAGE_5_TEXT_REVEAL) {
+                    Text(
+                        text = "— PULSE —",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 5.sp
+                        ),
+                        modifier = Modifier
+                            .graphicsLayer {
+                                alpha = pulseAlpha
+                                translationX = pulseOffsetSlide
+                            }
+                            .background(
+                                brush = Brush.linearGradient(
+                                    listOf(Color(0xFFFF7043), Color(0xFFEC407A), Color(0xFF42A5F5))
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .padding(horizontal = 14.dp, vertical = 4.dp),
+                        color = Color.White
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Dynamic Tagline
+                if (splashStage >= SplashStage.STAGE_6_TAGLINE) {
+                    Text(
+                        text = "One Campus. Infinite Moments.",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.tertiary
+                        ),
+                        modifier = Modifier.graphicsLayer { alpha = taglineAlphaState }
                     )
                 }
             }
         }
+    }
     }
 }
 
@@ -373,14 +587,18 @@ fun CampusTopBar(
 ) {
     CenterAlignedTopAppBar(
         title = {
-            Text(
-                text = "Campus Pulse",
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.SansSerif,
-                    letterSpacing = 1.sp
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CampusPulseLogoView(modifier = Modifier.size(28.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Campus Pulse",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.SansSerif,
+                        letterSpacing = 1.sp
+                    )
                 )
-            )
+            }
         },
         navigationIcon = {
             if (currentScreen != Screen.Home) {
@@ -392,11 +610,10 @@ fun CampusTopBar(
                     )
                 }
             } else {
-                Icon(
-                    imageVector = Icons.Default.School,
-                    contentDescription = "Logo",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 12.dp)
+                CampusPulseLogoView(
+                    modifier = Modifier
+                        .padding(start = 12.dp)
+                        .size(32.dp)
                 )
             }
         },
@@ -610,19 +827,17 @@ fun LaunchScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.widthIn(max = 450.dp)
         ) {
-            // Hero Space Illustration
+            // Hero Space Illustration with Mascot logo!
             Box(
                 modifier = Modifier
-                    .size(120.dp)
-                    .clip(RoundedCornerShape(32.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                    .size(130.dp)
+                    .clip(RoundedCornerShape(36.dp))
+                    .background(Color.White)
+                    .shadow(1.dp, RoundedCornerShape(36.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.School,
-                    contentDescription = "Logo",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(64.dp)
+                CampusPulseLogoView(
+                    modifier = Modifier.size(110.dp)
                 )
             }
 
@@ -788,7 +1003,11 @@ fun StudentLoginScreen(
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            CampusPulseLogoView(
+                modifier = Modifier
+                    .size(96.dp)
+                    .padding(bottom = 12.dp)
+            )
 
             Text(
                 text = "Welcome, Student",
@@ -941,6 +1160,12 @@ fun StudentRegisterScreen(
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
             }
 
+            CampusPulseLogoView(
+                modifier = Modifier
+                    .size(80.dp)
+                    .padding(bottom = 12.dp)
+            )
+
             Text(
                 text = "Student Registration",
                 style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold)
@@ -1082,7 +1307,11 @@ fun OrganizerLoginScreen(
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            CampusPulseLogoView(
+                modifier = Modifier
+                    .size(96.dp)
+                    .padding(bottom = 12.dp)
+            )
 
             Text(
                 text = "Welcome, Organizer",
@@ -1222,6 +1451,12 @@ fun OrganizerRegisterScreen(
             IconButton(onClick = navigateBack, modifier = Modifier.align(Alignment.Start)) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
             }
+
+            CampusPulseLogoView(
+                modifier = Modifier
+                    .size(80.dp)
+                    .padding(bottom = 12.dp)
+            )
 
             Text(
                 text = "Credentials Request",
@@ -2993,8 +3228,21 @@ fun MyTicketsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Mini QR helper
-                                Icon(Icons.Default.QrCode, "", modifier = Modifier.size(52.dp))
+                                // Mini QR helper with Campus Pulse security stamp
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.QrCode, "QR Code", modifier = Modifier.size(54.dp))
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .background(Color.White)
+                                            .shadow(1.dp, CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CampusPulseLogoView(modifier = Modifier.size(24.dp))
+                                    }
+                                }
                                 
                                 Button(
                                     onClick = { viewModel.requestCancelRegistration(ticket.id) },
@@ -3039,7 +3287,11 @@ fun MyTicketsScreen(
                                 Text(coupon.eventTitle, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
                                 Text("Coupon: ${coupon.id}", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                             }
-                            Icon(Icons.Default.QrCode, "", modifier = Modifier.size(40.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.QrCode, "QR Code", modifier = Modifier.size(40.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                CampusPulseLogoView(modifier = Modifier.size(24.dp))
+                            }
                         }
                     }
                 }
@@ -3077,14 +3329,27 @@ fun AIChatScreen(
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    val isBlinkingMascot = remember { mutableStateOf(false) }
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            delay(Random.nextLong(2000, 4500))
+                            isBlinkingMascot.value = true
+                            delay(180)
+                            isBlinkingMascot.value = false
+                        }
+                    }
+
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
-                            .background(Color.White.copy(0.2f)),
+                            .background(Color.White),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.SmartToy, "", tint = Color.White)
+                        CampusPulseLogoView(
+                            modifier = Modifier.size(38.dp),
+                            isBlinking = isBlinkingMascot.value
+                        )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
@@ -3136,7 +3401,11 @@ fun AIChatScreen(
                         .padding(top = 48.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(Icons.Default.SmartToy, "", tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(56.dp))
+                    CampusPulseLogoView(
+                        modifier = Modifier.size(80.dp),
+                        smileAlpha = 1f,
+                        pulseScale = 1f
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         "Pulse AI is fully prepared offline / online. Ask me about dynamic registrations, rule books or coupon discount details!",
@@ -3208,17 +3477,38 @@ fun AIChatScreen(
 fun ChatBubble(chat: ChatEntity) {
     val containerColor = if (chat.isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
     val contentColor = if (chat.isUser) Color.White else MaterialTheme.colorScheme.onSurface
-    val alignment = if (chat.isUser) Alignment.End else Alignment.Start
     val shape = if (chat.isUser) {
         RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 16.dp)
     } else {
         RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 16.dp)
     }
 
-    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = alignment) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = if (chat.isUser) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Top
+    ) {
+        if (!chat.isUser) {
+            Box(
+                modifier = Modifier
+                    .padding(end = 8.dp, top = 4.dp)
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .shadow(1.dp, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                CampusPulseLogoView(modifier = Modifier.size(22.dp))
+            }
+        }
+
         Card(
             colors = CardDefaults.cardColors(containerColor = containerColor),
-            shape = shape
+            shape = shape,
+            modifier = Modifier.widthIn(max = 280.dp),
+            border = if (!chat.isUser) BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant) else null
         ) {
             Text(
                 text = chat.messageText,
@@ -3226,6 +3516,19 @@ fun ChatBubble(chat: ChatEntity) {
                 fontSize = 14.sp,
                 modifier = Modifier.padding(12.dp)
             )
+        }
+
+        if (chat.isUser) {
+            Box(
+                modifier = Modifier
+                    .padding(start = 8.dp, top = 4.dp)
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.secondaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Person, "", tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(16.dp))
+            }
         }
     }
 }
@@ -4108,6 +4411,294 @@ fun ProfileInfoRow(icon: ImageVector, label: String, value: String) {
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
+        }
+    }
+}
+
+@Composable
+fun CampusPulseLogoView(
+    modifier: Modifier = Modifier,
+    logoScale: Float = 1f,
+    capYOffset: Float = 0f,
+    tasselSwing: Float = 0f,
+    smileAlpha: Float = 1f,
+    pulseScale: Float = 1f,
+    pulseOffset: Float = 0f,
+    isBlinking: Boolean = false,
+    shimmerOffset: Float = 0f
+) {
+    Canvas(modifier = modifier) {
+        val width = size.width
+        val height = size.height
+        
+        // Vibrant brand gradient (Orange -> Pink -> Purple -> Blue)
+        val gradientBrush = if (shimmerOffset != 0f) {
+            Brush.linearGradient(
+                colors = listOf(
+                    Color(0xFFFF7043), // Peach Orange
+                    Color(0xFFEC407A), // Hot Pink
+                    Color(0xFFAB47BC), // Purple
+                    Color(0xFF42A5F5)  // Bright Blue
+                ),
+                start = Offset(shimmerOffset, 0f),
+                end = Offset(shimmerOffset + width, height)
+            )
+        } else {
+            Brush.linearGradient(
+                colors = listOf(
+                    Color(0xFFFF7043),
+                    Color(0xFFEC407A),
+                    Color(0xFFAB47BC),
+                    Color(0xFF42A5F5)
+                ),
+                start = Offset(0f, 0f),
+                end = Offset(width, height)
+            )
+        }
+        
+        // Translate & scale the whole logo
+        val globalScale = logoScale
+        scale(globalScale, pivot = Offset(width / 2f, height / 2f)) {
+            
+            // --- 1. Draw the Speech Bubble C ---
+            val strokeWidth = width * 0.16f
+            
+            // Draw thick circular arc leaving a gap on the right (30f to 330f degrees)
+            // Start at 45f degrees, sweeping 270f degrees
+            drawArc(
+                brush = gradientBrush,
+                startAngle = 45f,
+                sweepAngle = 270f,
+                useCenter = false,
+                style = Stroke(width = strokeWidth, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            )
+            
+            // Draw speech bubble tail pointing down-left at around 135 degrees
+            val tailPath = androidx.compose.ui.graphics.Path().apply {
+                moveTo(width * 0.32f, height * 0.72f) // base attachment point
+                lineTo(width * 0.22f, height * 0.88f) // pointing vertex
+                lineTo(width * 0.44f, height * 0.78f) // other attachment point
+                close()
+            }
+            drawPath(path = tailPath, brush = gradientBrush)
+            
+            // --- 2. Draw the Graduation Cap ---
+            // Tilted diamond sitting over the top left of the C speech bubble (around center x = width * 0.38f, y = height * 0.22f)
+            val capPivotX = width * 0.38f
+            val capPivotY = height * 0.22f + capYOffset
+            
+            translate(left = 0f, top = capYOffset) {
+                // Skull cap under the board (rich deep dark navy/indigo)
+                val skullPath = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(width * 0.26f, height * 0.21f)
+                    quadraticBezierTo(width * 0.38f, height * 0.32f, width * 0.50f, height * 0.23f)
+                    lineTo(width * 0.46f, height * 0.18f)
+                    lineTo(width * 0.30f, height * 0.18f)
+                    close()
+                }
+                drawPath(path = skullPath, color = Color(0xFF0F172A))
+                
+                // Mortarboard diamond path (dark navy/slate)
+                val boardPath = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(width * 0.38f, height * 0.10f) // top
+                    lineTo(width * 0.62f, height * 0.18f) // right
+                    lineTo(width * 0.38f, height * 0.26f) // bottom
+                    lineTo(width * 0.14f, height * 0.18f) // left
+                    close()
+                }
+                drawPath(path = boardPath, color = Color(0xFF1E293B))
+                
+                // Golden tassel hanging down on the left, rotates (swings) around the center button
+                val tasselButtonX = width * 0.38f
+                val tasselButtonY = height * 0.18f
+                
+                rotate(degrees = tasselSwing, pivot = Offset(tasselButtonX, tasselButtonY)) {
+                    val tasselColor = Color(0xFFFFB74D) // Beautiful golden orange
+                    
+                    // Draw tassel string draped over to the left and hanging down
+                    val tasselString = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(tasselButtonX, tasselButtonY)
+                        quadraticBezierTo(width * 0.22f, height * 0.20f, width * 0.15f, height * 0.24f)
+                        lineTo(width * 0.15f, height * 0.34f)
+                    }
+                    drawPath(
+                        path = tasselString,
+                        color = tasselColor,
+                        style = Stroke(width = width * 0.015f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                    )
+                    
+                    // Draw tassel brush/fringe at the bottom of the string
+                    drawCircle(
+                        color = tasselColor,
+                        radius = width * 0.025f,
+                        center = Offset(width * 0.15f, height * 0.36f)
+                    )
+                }
+                
+                // Little center button on top of mortarboard
+                drawCircle(
+                    color = Color(0xFFFFB74D),
+                    radius = width * 0.018f,
+                    center = Offset(tasselButtonX, tasselButtonY)
+                )
+            }
+            
+            // --- 3. Draw the Smile (mascot face inside the hollow circle) ---
+            if (smileAlpha > 0f) {
+                val smileColor = Color(0xFFFF7043) // vibrant signature orange
+                
+                // Left Eye (supports blinking animation option)
+                val leftEyeHeight = if (isBlinking) height * 0.004f else height * 0.024f
+                val eyeWidth = width * 0.024f
+                
+                if (isBlinking) {
+                    // Draw closed eye stroke
+                    drawLine(
+                        color = smileColor,
+                        start = Offset(width * 0.44f, height * 0.46f),
+                        end = Offset(width * 0.48f, height * 0.46f),
+                        strokeWidth = width * 0.015f,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                } else {
+                    drawCircle(
+                        color = smileColor,
+                        radius = width * 0.023f,
+                        center = Offset(width * 0.46f, height * 0.46f),
+                        alpha = smileAlpha
+                    )
+                }
+                
+                // Right Eye
+                if (isBlinking) {
+                    drawLine(
+                        color = smileColor,
+                        start = Offset(width * 0.54f, height * 0.46f),
+                        end = Offset(width * 0.58f, height * 0.46f),
+                        strokeWidth = width * 0.015f,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                } else {
+                    drawCircle(
+                        color = smileColor,
+                        radius = width * 0.023f,
+                        center = Offset(width * 0.56f, height * 0.46f),
+                        alpha = smileAlpha
+                    )
+                }
+                
+                // Smiling Mouth Curve
+                drawArc(
+                    color = smileColor,
+                    startAngle = 0f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(width * 0.45f, height * 0.48f),
+                    size = androidx.compose.ui.geometry.Size(width * 0.11f, height * 0.07f),
+                    style = Stroke(width = width * 0.016f, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                    alpha = smileAlpha
+                )
+            }
+            
+            // --- 4. Draw Orange Pulse Accents (three outward lines on the right) ---
+            if (pulseScale > 0f) {
+                val pulseColor = Color(0xFFFF7043)
+                val strokeWid = width * 0.022f
+                
+                // Scale outward and apply translate offset
+                scale(
+                    scale = pulseScale,
+                    pivot = Offset(width * 0.7f, height * 0.46f)
+                ) {
+                    // Upper pulse line
+                    drawLine(
+                        color = pulseColor,
+                        start = Offset(width * 0.74f + pulseOffset, height * 0.36f - pulseOffset),
+                        end = Offset(width * 0.83f + pulseOffset, height * 0.28f - pulseOffset),
+                        strokeWidth = strokeWid,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                    // Middle pulse line
+                    drawLine(
+                        color = pulseColor,
+                        start = Offset(width * 0.77f + pulseOffset, height * 0.46f),
+                        end = Offset(width * 0.88f + pulseOffset, height * 0.46f),
+                        strokeWidth = strokeWid,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                    // Lower pulse line
+                    drawLine(
+                        color = pulseColor,
+                        start = Offset(width * 0.74f + pulseOffset, height * 0.56f + pulseOffset),
+                        end = Offset(width * 0.83f + pulseOffset, height * 0.64f + pulseOffset),
+                        strokeWidth = strokeWid,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                }
+            }
+        }
+    }
+}
+
+object SimpleChimePlayer {
+    fun playChime() {
+        try {
+            val sampleRate = 44100
+            val duration = 0.4 // seconds
+            val numSamples = (duration * sampleRate).toInt()
+            val buffer = ShortArray(numSamples)
+            
+            for (i in 0 until numSamples) {
+                val t = i.toDouble() / sampleRate
+                // Soft chime chord: C5 (523.25Hz) and E5 (659.25Hz) with exponent fading envelope
+                val envelope = Math.exp(-t * 9.0)
+                val s = 0.5 * Math.sin(2.0 * Math.PI * 523.25 * t) + 
+                        0.5 * Math.sin(2.0 * Math.PI * 659.25 * t)
+                buffer[i] = (s * envelope * Short.MAX_VALUE).toInt().toShort()
+            }
+            
+            val audioTrack = android.media.AudioTrack(
+                android.media.AudioManager.STREAM_MUSIC,
+                sampleRate,
+                android.media.AudioFormat.CHANNEL_OUT_MONO,
+                android.media.AudioFormat.ENCODING_PCM_16BIT,
+                buffer.size * 2,
+                android.media.AudioTrack.MODE_STATIC
+            )
+            audioTrack.write(buffer, 0, buffer.size)
+            audioTrack.play()
+        } catch (e: Exception) {
+            android.util.Log.e("SimpleChimePlayer", "Error playing startup chime tone", e)
+        }
+    }
+    
+    fun playHeartbeat() {
+        try {
+            val sampleRate = 44100
+            val duration = 0.25 // seconds
+            val numSamples = (duration * sampleRate).toInt()
+            val buffer = ShortArray(numSamples)
+            
+            for (i in 0 until numSamples) {
+                val t = i.toDouble() / sampleRate
+                // Soft low beat: bell shape envelope on a 75Hz low hum
+                val envelope = Math.sin(Math.PI * (t / duration))
+                val s = Math.sin(2.0 * Math.PI * 75.0 * t)
+                buffer[i] = (s * envelope * 0.7 * Short.MAX_VALUE).toInt().toShort()
+            }
+            
+            val audioTrack = android.media.AudioTrack(
+                android.media.AudioManager.STREAM_MUSIC,
+                sampleRate,
+                android.media.AudioFormat.CHANNEL_OUT_MONO,
+                android.media.AudioFormat.ENCODING_PCM_16BIT,
+                buffer.size * 2,
+                android.media.AudioTrack.MODE_STATIC
+            )
+            audioTrack.write(buffer, 0, buffer.size)
+            audioTrack.play()
+        } catch (e: Exception) {
+            android.util.Log.e("SimpleChimePlayer", "Error playing heartbeat tone", e)
         }
     }
 }

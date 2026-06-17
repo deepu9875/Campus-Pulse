@@ -29,6 +29,13 @@ class CampusPulseViewModel(application: Application) : AndroidViewModel(applicat
         _themeMode.value = mode
     }
 
+    private val _splashSoundEnabled = MutableStateFlow<Boolean>(true)
+    val splashSoundEnabled: StateFlow<Boolean> = _splashSoundEnabled.asStateFlow()
+
+    fun setSplashSoundEnabled(enabled: Boolean) {
+        _splashSoundEnabled.value = enabled
+    }
+
     private val _notifications = MutableStateFlow<List<String>>(
         listOf(
             "Welcome to Campus Pulse! Check out the featured hackathons.",
