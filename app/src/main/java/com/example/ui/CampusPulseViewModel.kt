@@ -1,9 +1,11 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -17,6 +19,18 @@ sealed interface CurrentUser {
 
 class CampusPulseViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = CampusPulseRepository(application)
+    private val sharedPrefs = application.getSharedPreferences("campus_pulse_prefs", Context.MODE_PRIVATE)
+
+    private val _isBiometricEnabled = MutableStateFlow(sharedPrefs.getBoolean("biometric_enabled", false))
+    val isBiometricEnabled: StateFlow<Boolean> = _isBiometricEnabled.asStateFlow()
+
+    fun setBiometricEnabled(enabled: Boolean) {
+        sharedPrefs.edit().putBoolean("biometric_enabled", enabled).apply()
+        _isBiometricEnabled.value = enabled
+    }
+
+    private val _isSessionRestored = MutableStateFlow(false)
+    val isSessionRestored: StateFlow<Boolean> = _isSessionRestored.asStateFlow()
 
     // --- State Streams ---
     private val _userState = MutableStateFlow<CurrentUser>(CurrentUser.Guest)
@@ -105,6 +119,72 @@ class CampusPulseViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             repository.populateInitialCacheIfNeeded()
             _isCacheReady.value = true
+            restoreCachedSession()
+        }
+    }
+
+    private suspend fun restoreCachedSession() {
+        val savedEmail = sharedPrefs.getString("logged_in_user_email", null)
+        val savedRole = sharedPrefs.getString("logged_in_user_role", null)
+        
+        if (savedEmail != null && savedRole != null) {
+            when (savedRole) {
+                "student" -> {
+                    val student = repository.getStudentByEmail(savedEmail)
+                    if (student != null) {
+                        _userState.value = CurrentUser.Student(student)
+                        addNotification("Welcome back, ${student.name}! Restored secure session.")
+                    } else {
+                        clearSessionData()
+                    }
+                }
+                "organizer" -> {
+                    val organizer = repository.getOrganizerByEmail(savedEmail)
+                    if (organizer != null) {
+                        _userState.value = CurrentUser.Organizer(organizer)
+                        addNotification("Welcome back, ${organizer.organizerName}! Restored organizer session.")
+                    } else {
+                        clearSessionData()
+                    }
+                }
+                "admin" -> {
+                    _userState.value = CurrentUser.Admin
+                    addNotification("Welcome back admin! Controller restored.")
+                }
+                else -> {
+                    _userState.value = CurrentUser.Guest
+                }
+            }
+        }
+        _isSessionRestored.value = true
+    }
+
+    private fun saveSessionData(email: String, role: String) {
+        sharedPrefs.edit()
+            .putString("logged_in_user_email", email)
+            .putString("logged_in_user_role", role)
+            .apply()
+        
+        try {
+            val auth = FirebaseAuth.getInstance()
+            if (auth.currentUser == null) {
+                auth.signInAnonymously()
+            }
+        } catch (e: Exception) {
+            // Graceful fallback for offline / unconfigured environments
+        }
+    }
+
+    fun clearSessionData() {
+        sharedPrefs.edit()
+            .remove("logged_in_user_email")
+            .remove("logged_in_user_role")
+            .apply()
+        
+        try {
+            FirebaseAuth.getInstance().signOut()
+        } catch (e: Exception) {
+            // Graceful fallback
         }
     }
 
@@ -119,6 +199,7 @@ class CampusPulseViewModel(application: Application) : AndroidViewModel(applicat
             val student = repository.getStudentByEmail(email)
             if (student != null) {
                 _userState.value = CurrentUser.Student(student)
+                saveSessionData(student.email, "student")
                 addNotification("Signed in successfully as ${student.name}.")
                 onComplete(true, "Welcome back, ${student.name}!")
             } else {
@@ -155,6 +236,7 @@ class CampusPulseViewModel(application: Application) : AndroidViewModel(applicat
             )
             repository.registerStudent(student)
             _userState.value = CurrentUser.Student(student)
+            saveSessionData(student.email, "student")
             addNotification("Account created! Student registration verified.")
             onComplete(true, "Student registered and logged in successfully!")
         }
@@ -165,6 +247,7 @@ class CampusPulseViewModel(application: Application) : AndroidViewModel(applicat
             val organizer = repository.getOrganizerByEmail(email)
             if (organizer != null) {
                 _userState.value = CurrentUser.Organizer(organizer)
+                saveSessionData(organizer.email, "organizer")
                 addNotification("Organizer session started for ${organizer.organizerName}.")
                 onComplete(true, "LoggedIn as Organizer: ${organizer.organizerName}")
             } else {
@@ -198,6 +281,7 @@ class CampusPulseViewModel(application: Application) : AndroidViewModel(applicat
             )
             repository.registerOrganizer(organizer)
             _userState.value = CurrentUser.Organizer(organizer)
+            saveSessionData(organizer.email, "organizer")
             addNotification("Organizer registered. Pending admin verification.")
             onComplete(true, "Official organizer credentials submitted successfully!")
         }
@@ -205,11 +289,13 @@ class CampusPulseViewModel(application: Application) : AndroidViewModel(applicat
 
     fun loginAsAdmin() {
         _userState.value = CurrentUser.Admin
+        saveSessionData("admin@campuspulse.internal", "admin")
         addNotification("Super Admin developer console activated.")
     }
 
     fun logout() {
         _userState.value = CurrentUser.Guest
+        clearSessionData()
         addNotification("Logged out successfully.")
     }
 

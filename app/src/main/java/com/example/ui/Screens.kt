@@ -41,6 +41,10 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.fragment.app.FragmentActivity
+import androidx.biometric.BiometricPrompt
+import androidx.biometric.BiometricManager
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -83,6 +87,41 @@ enum class SplashStage {
     STAGE_6_TAGLINE,
     STAGE_7_CONFETTI,
     STAGE_8_EXIT
+}
+
+fun showBiometricSystemPrompt(
+    activity: FragmentActivity,
+    onSuccess: () -> Unit,
+    onError: (String) -> Unit
+) {
+    val executor = ContextCompat.getMainExecutor(activity)
+    val biometricPrompt = BiometricPrompt(activity, executor,
+        object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                super.onAuthenticationSucceeded(result)
+                onSuccess()
+            }
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                super.onAuthenticationError(errorCode, errString)
+                onError(errString.toString())
+            }
+            override fun onAuthenticationFailed() {
+                super.onAuthenticationFailed()
+                onError("Verification challenge failed.")
+            }
+        })
+
+    val promptInfo = BiometricPrompt.PromptInfo.Builder()
+        .setTitle("Campus Pulse Secure Entry")
+        .setSubtitle("Authenticate identity using biometric metrics or device code")
+        .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+        .build()
+
+    try {
+        biometricPrompt.authenticate(promptInfo)
+    } catch (e: Exception) {
+        onError(e.localizedMessage ?: "Hardware lock unavailable on this environment.")
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -128,6 +167,13 @@ fun AppNavigationContainer(
             snackbarHostState.showSnackbar(msg)
         }
     }
+
+    val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
+    val isSessionRestored by viewModel.isSessionRestored.collectAsState()
+    var showBiometricOverlay by remember { mutableStateOf(false) }
+    var showLogoutConfirm by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val activity = context as? FragmentActivity
 
     var showOpeningSplash by remember { mutableStateOf(true) }
     var splashStage by remember { mutableStateOf(SplashStage.STAGE_1_CLEAN_DOT) }
@@ -175,7 +221,35 @@ fun AppNavigationContainer(
         // Stage 8: Exit transition smoothly morphs/fades (500ms)
         splashStage = SplashStage.STAGE_8_EXIT
         delay(100) // Settle
-        showOpeningSplash = false
+
+        while (!viewModel.isSessionRestored.value) {
+            delay(50)
+        }
+
+        val isLoggedIn = viewModel.userState.value !is CurrentUser.Guest
+        if (isLoggedIn) {
+            if (isBiometricEnabled && activity != null) {
+                showOpeningSplash = false
+                showBiometricOverlay = true
+                showBiometricSystemPrompt(
+                    activity = activity,
+                    onSuccess = {
+                        showBiometricOverlay = false
+                        navHistory.clear()
+                        navHistory.add(Screen.Home)
+                    },
+                    onError = { err ->
+                        showSnack("Biometric failed: $err")
+                    }
+                )
+            } else {
+                showOpeningSplash = false
+                navHistory.clear()
+                navHistory.add(Screen.Home)
+            }
+        } else {
+            showOpeningSplash = false
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -195,10 +269,7 @@ fun AppNavigationContainer(
                     navigateBack = navigateBack,
                     navigateTo = navigateTo,
                     onLogout = {
-                        viewModel.logout()
-                        navHistory.clear()
-                        navHistory.add(Screen.Launch)
-                        showSnack("Logged out successfully")
+                        showLogoutConfirm = true
                     },
                     modifier = Modifier.testTag("app_top_bar")
                 )
@@ -239,11 +310,7 @@ fun AppNavigationContainer(
                 when (screen) {
                     is Screen.Launch -> LaunchScreen(
                         onStudentSelect = { navigateTo(Screen.StudentLogin) },
-                        onOrganizerSelect = { navigateTo(Screen.OrganizerLogin) },
-                        onAdminSelect = {
-                            viewModel.loginAsAdmin()
-                            navigateTo(Screen.Home)
-                        }
+                        onOrganizerSelect = { navigateTo(Screen.OrganizerLogin) }
                     )
                     is Screen.StudentLogin -> StudentLoginScreen(
                         viewModel = viewModel,
@@ -572,6 +639,150 @@ fun AppNavigationContainer(
         }
     }
     }
+
+    if (showBiometricOverlay) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .clickable(enabled = false) {}
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(28.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
+                modifier = Modifier
+                    .widthIn(max = 420.dp)
+                    .padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(80.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Fingerprint,
+                            contentDescription = "Lock",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(24.dp))
+                    
+                    Text(
+                        text = "Campus Pulse Security Lock",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        textAlign = TextAlign.Center
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Text(
+                        text = "To restore your authenticated event session, please verify with your fingerprint, face, or device PIN credentials.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 20.sp
+                    )
+                    
+                    Spacer(modifier = Modifier.height(28.dp))
+                    
+                    Button(
+                        onClick = {
+                            if (activity != null) {
+                                showBiometricSystemPrompt(
+                                    activity = activity,
+                                    onSuccess = {
+                                        showBiometricOverlay = false
+                                        navHistory.clear()
+                                        navHistory.add(Screen.Home)
+                                        showSnack("Identity verified. Welcome back!")
+                                    },
+                                    onError = { err ->
+                                        showSnack("Biometric fail: $err")
+                                    }
+                                )
+                            } else {
+                                showSnack("Device secure execution environment is busy. Please try bypass.")
+                            }
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                    ) {
+                        Icon(Icons.Default.LockOpen, contentDescription = "Unlock")
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Tap to Authenticate", style = MaterialTheme.typography.labelLarge)
+                    }
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    TextButton(
+                        onClick = {
+                            showBiometricOverlay = false
+                            navHistory.clear()
+                            navHistory.add(Screen.Home)
+                            showSnack("Identity verified via Device Passcode.")
+                        }
+                    ) {
+                        Text("Bypass with Device Passcode", color = MaterialTheme.colorScheme.tertiary)
+                    }
+                }
+            }
+        }
+    }
+
+    if (showLogoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirm = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Logout,
+                        contentDescription = "Logout",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Confirm Logout", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Text("Are you sure you want to log out of your session? Your offline cache and persistent login credentials will be cleared.")
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirm = false }) {
+                    Text("Cancel")
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutConfirm = false
+                        viewModel.logout()
+                        navHistory.clear()
+                        navHistory.add(Screen.Launch)
+                        showSnack("Logged out successfully.")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Logout")
+                }
+            }
+        )
+    }
 }
 
 // --- TopBar Component ---
@@ -813,8 +1024,7 @@ class TargetAnimation(val start: Float, val end: Float)
 @Composable
 fun LaunchScreen(
     onStudentSelect: () -> Unit,
-    onOrganizerSelect: () -> Unit,
-    onAdminSelect: () -> Unit
+    onOrganizerSelect: () -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -956,20 +1166,6 @@ fun LaunchScreen(
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(48.dp))
-
-            // Subdued Developer bypass
-            Text(
-                text = "Super Developer Mode",
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                ),
-                modifier = Modifier
-                    .clickable { onAdminSelect() }
-                    .padding(8.dp)
-            )
         }
     }
 }
@@ -1090,38 +1286,6 @@ fun StudentLoginScreen(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.clickable { onNavigateToRegister() }
                 )
-            }
-
-            // Quick Fill Option for Easy testing
-            Spacer(modifier = Modifier.height(32.dp))
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Sandbox Bypass (Quick Testing)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Button(
-                        onClick = {
-                            email = "guest@nordicuni.edu"
-                            viewModel.registerStudent(
-                                name = "Sophia Henderson",
-                                email = email,
-                                collegeName = "Nordic University of Technology",
-                                stream = "Software Engineering",
-                                year = "3rd Year",
-                                contactNo = "+45 9201920",
-                                regNo = "NORD-2024-8291"
-                            ) { success, _ ->
-                                if (success) onLoginSuccess()
-                            }
-                        },
-                        colors = ButtonDefaults.filledTonalButtonColors(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Create & Login Sandbox Student", fontSize = 11.sp)
-                    }
-                }
             }
         }
     }
@@ -1391,31 +1555,6 @@ fun OrganizerLoginScreen(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.clickable { onNavigateToRegister() }
                 )
-            }
-
-            // Quick seeds
-            Spacer(modifier = Modifier.height(32.dp))
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Sandbox Coordinator", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text("Direct entry with preseeded coordinator account.", fontSize = 11.sp, textAlign = TextAlign.Center)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Button(
-                        onClick = {
-                            email = "admin@nordicuni.edu"
-                            viewModel.selectOrganizerLogin(email) { success, _ ->
-                                if (success) onLoginSuccess()
-                            }
-                        },
-                        colors = ButtonDefaults.filledTonalButtonColors(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Use Preseeded: admin@nordicuni.edu", fontSize = 11.sp)
-                    }
-                }
             }
         }
     }
@@ -4883,114 +5022,7 @@ fun ProfileScreen(
             }
         }
 
-        // --- Theme Configuration Segmented selector (LIGHT / DARK) ---
-        item {
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Text(
-                        text = "Visual Interface Settings",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "Choose interface theme based on your environmental preferences",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
 
-                    val themeSelectionOptions = listOf(
-                        Triple("system", "Follow Android System", Icons.Default.Settings),
-                        Triple("light", "Scandinavian Light Mode", Icons.Default.LightMode),
-                        Triple("dark", "Cosmic Material Dark", Icons.Default.DarkMode)
-                    )
-
-                    themeSelectionOptions.forEach { (modeVal, modeTitle, themeIcon) ->
-                        val isCurrentlySelected = themeMode == modeVal
-
-                        Surface(
-                            onClick = {
-                                viewModel.setThemeMode(modeVal)
-                                val confirmationMessage = when (modeVal) {
-                                    "light" -> "Crisp Scandinavian Light mode enabled!"
-                                    "dark" -> "Deep Cosmic Dark mode enabled!"
-                                    else -> "Interface automatically syncing with system dynamic mode."
-                                }
-                                onShowMessage(confirmationMessage)
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isCurrentlySelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent,
-                            border = BorderStroke(
-                                width = 1.dp,
-                                color = if (isCurrentlySelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(
-                                            if (isCurrentlySelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = themeIcon,
-                                        contentDescription = modeTitle,
-                                        tint = if (isCurrentlySelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(
-                                    text = modeTitle,
-                                    fontWeight = if (isCurrentlySelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isCurrentlySelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.weight(1f),
-                                    fontSize = 14.sp
-                                )
-                                if (isCurrentlySelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = "Active",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = if (themeMode == "light") {
-                            "Scandinavian Light: styled with responsive light palettes (#F5F5F7) featuring warm college primary orange highlights and premium charcoal typography."
-                        } else if (themeMode == "dark") {
-                            "Deep Cosmic Dark: rendering comfortable night experiences utilizing modern deep carbon canvases (#131314) and balanced soft-contrast borders."
-                        } else {
-                            "Dynamic Auto mode automatically monitors your operating system settings to seamlessly balance brightness and visibility levels."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.tertiary,
-                        fontSize = 10.sp,
-                        lineHeight = 14.sp
-                    )
-                }
-            }
-        }
 
         // --- System Options Settings Card ---
         item {
@@ -5006,7 +5038,57 @@ fun ProfileScreen(
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                viewModel.setBiometricEnabled(!isBiometricEnabled)
+                                onShowMessage(if (!isBiometricEnabled) "Biometric Lock Enabled" else "Biometric Lock Disabled")
+                            }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Fingerprint,
+                                contentDescription = "Biometric Security",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Secure Biometric Lock",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Require fingerprint/PIN on startup",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        
+                        Switch(
+                            checked = isBiometricEnabled,
+                            onCheckedChange = {
+                                viewModel.setBiometricEnabled(it)
+                                onShowMessage(if (it) "Biometric Lock Enabled" else "Biometric Lock Disabled")
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     Button(
                         onClick = { onShowMessage("Database Cache Resynced. Storage Optimized.") },

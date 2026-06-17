@@ -11,21 +11,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-private val DarkColorScheme =
-  darkColorScheme(
-    primary = OrangePrimary,
-    secondary = OrangeSecondary,
-    tertiary = DarkGreyMuted,
-    background = DarkBg,
-    surface = DarkCardBg,
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onBackground = Color.White,
-    onSurface = Color.White,
-    surfaceVariant = DarkCardBg,
-    onSurfaceVariant = DarkGreyMuted
-  )
-
 private val LightColorScheme =
   lightColorScheme(
     primary = OrangePrimary,
@@ -43,21 +28,12 @@ private val LightColorScheme =
 
 @Composable
 fun MyApplicationTheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
-  // Disabling dynamic colors by default to preserve the premium Scandinavian College Orange design system
+  darkTheme: Boolean = false, // Always launch in Light Mode by default
   dynamicColor: Boolean = false,
   content: @Composable () -> Unit,
 ) {
-  val colorScheme =
-    when {
-      dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-        val context = LocalContext.current
-        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-      }
-
-      darkTheme -> DarkColorScheme
-      else -> LightColorScheme
-    }
+  // Always use the customized premium LightColorScheme
+  val colorScheme = LightColorScheme
 
   MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
 }
